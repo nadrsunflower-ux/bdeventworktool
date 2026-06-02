@@ -6,11 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { Task, Status, Priority } from "@/types/task";
-import type { CalendarEvent, CalendarEventInput, EventLocation, ChecklistItem } from "@/types/event";
-import { subscribeTasks, updateTask } from "@/lib/tasks";
-import { subscribeEvents, updateEvent } from "@/lib/events";
+import type { EventTask, EventTaskInput, EventLocation } from "@/types/event";
+import { formatRound } from "@/types/event";
+import { subscribeEventTasks, updateEventTask } from "@/lib/events";
 import Link from "next/link";
 
 const DAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -40,28 +38,24 @@ function formatShortDate(date: Date): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-const STATUS_STYLES: Record<Status, string> = {
-  pending: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
-  completed: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-};
-
-const STATUS_LABELS: Record<Status, string> = {
-  pending: "미완료",
-  completed: "완료",
-};
-
-const PRIORITY_STARS: Record<Priority, string> = {
-  high: "★★★",
-  medium: "★★",
-  low: "★",
-};
+function formatDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 const EVENT_LOCATION_COLORS: Record<EventLocation, string> = {
   "와우": "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300",
   "아이디": "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300",
 };
 
-/* ─── Calendar component (shared) ─── */
+const LOCATION_BADGE: Record<EventLocation, string> = {
+  "와우": "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300",
+  "아이디": "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300",
+};
+
+/* ─── Calendar component ─── */
 type CalendarItem = { title: string; urgent?: boolean; position?: "single" | "start" | "middle" | "end"; color?: string };
 
 function CalendarView({
@@ -72,7 +66,6 @@ function CalendarView({
   onNextMonth,
   onDateClick,
   itemMap,
-  accentColor,
   selectedInfo,
 }: {
   currentYear: number;
@@ -82,7 +75,6 @@ function CalendarView({
   onNextMonth: () => void;
   onDateClick: (day: number) => void;
   itemMap: Map<string, CalendarItem[]>;
-  accentColor: string;
   selectedInfo?: React.ReactNode;
 }) {
   const today = new Date();
@@ -145,7 +137,7 @@ function CalendarView({
             const items = itemMap.get(`${currentYear}-${currentMonth}-${day}`) ?? [];
             const selected = isSelected(day);
             const todayFlag = isToday(day);
-            const maxShow = 2;
+            const maxShow = 3;
 
             return (
               <button
@@ -186,10 +178,10 @@ function CalendarView({
                           className={`text-[10px] leading-tight truncate px-1 py-px ${rounding} ${
                             item.urgent
                               ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
-                              : item.color ?? accentColor
+                              : item.color ?? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
                           }`}
                         >
-                          {showTitle ? item.title : "\u00A0"}
+                          {showTitle ? item.title : " "}
                         </div>
                       );
                     })}
@@ -213,72 +205,38 @@ function CalendarView({
   );
 }
 
-/* ─── Main Page (Read-only) ─── */
+/* ─── Main Page ─── */
 export default function Home() {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const today = new Date();
 
-  // Tasks state
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [taskLoading, setTaskLoading] = useState(true);
-  const [taskCalYear, setTaskCalYear] = useState(today.getFullYear());
-  const [taskCalMonth, setTaskCalMonth] = useState(today.getMonth());
-  const [taskSelectedDate, setTaskSelectedDate] = useState<Date | null>(null);
+  const [items, setItems] = useState<EventTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [calYear, setCalYear] = useState(today.getFullYear());
+  const [calMonth, setCalMonth] = useState(today.getMonth());
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Events state
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [eventLoading, setEventLoading] = useState(true);
-  const [eventCalYear, setEventCalYear] = useState(today.getFullYear());
-  const [eventCalMonth, setEventCalMonth] = useState(today.getMonth());
-  const [eventSelectedDate, setEventSelectedDate] = useState<Date | null>(null);
-  const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
-  const [newChecklistText, setNewChecklistText] = useState("");
+  // 직원 인라인 편집(업로드일/예산) 로컬 상태
+  const [editUpload, setEditUpload] = useState("");
+  const [editBudget, setEditBudget] = useState("");
 
   const [firebaseError, setFirebaseError] = useState<string | null>(null);
 
   useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
-    const unsub1 = subscribeTasks(
-      (t) => { setTasks(t); setTaskLoading(false); setFirebaseError(null); },
-      (err) => { setFirebaseError(err.message); setTaskLoading(false); }
+    const unsub = subscribeEventTasks(
+      (data) => { setItems(data); setLoading(false); setFirebaseError(null); },
+      (err) => { setFirebaseError(err.message); setLoading(false); }
     );
-    const unsub2 = subscribeEvents(
-      (e) => { setEvents(e); setEventLoading(false); },
-      (err) => { setFirebaseError(err.message); setEventLoading(false); }
-    );
-    return () => { unsub1(); unsub2(); };
+    return () => unsub();
   }, []);
 
-  /* Task calendar helpers */
-  const taskItemMap = new Map<string, CalendarItem[]>();
-  tasks.forEach((t) => {
-    const d = t.deadline;
-    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-    const dday = getDDay(d);
-    const items = taskItemMap.get(key) ?? [];
-    items.push({ title: t.title, urgent: dday.urgent || dday.passed });
-    taskItemMap.set(key, items);
-  });
-
-  const filteredTasks = taskSelectedDate
-    ? tasks.filter((t) => {
-        const d = t.deadline;
-        return (
-          d.getFullYear() === taskSelectedDate.getFullYear() &&
-          d.getMonth() === taskSelectedDate.getMonth() &&
-          d.getDate() === taskSelectedDate.getDate()
-        );
-      })
-    : tasks.filter((t) => {
-        const d = t.deadline;
-        return d.getFullYear() === taskCalYear && d.getMonth() === taskCalMonth;
-      });
-
-  /* Event calendar helpers */
-  const eventItemMap = new Map<string, CalendarItem[]>();
-  events.forEach((ev) => {
+  /* 달력 아이템 맵: 이벤트 기간을 range bar로 표시 */
+  const itemMap = new Map<string, CalendarItem[]>();
+  items.forEach((ev) => {
     const start = new Date(ev.startDate);
     start.setHours(0, 0, 0, 0);
     const end = new Date(ev.endDate);
@@ -299,26 +257,28 @@ export default function Home() {
         else if (visualEnd) position = "end";
         else position = "middle";
       }
-      const items = eventItemMap.get(key) ?? [];
-      items.push({ title: ev.title, position, color: EVENT_LOCATION_COLORS[ev.location] });
-      eventItemMap.set(key, items);
+      const arr = itemMap.get(key) ?? [];
+      const roundLabel = formatRound(ev.roundMonth, ev.roundSession);
+      const label = roundLabel ? `${roundLabel} ${ev.title}` : ev.title;
+      arr.push({ title: label, position, color: EVENT_LOCATION_COLORS[ev.location] });
+      itemMap.set(key, arr);
       cursor.setDate(cursor.getDate() + 1);
     }
   });
 
-  const filteredEvents = eventSelectedDate
-    ? events.filter((ev) => {
+  const filteredItems = selectedDate
+    ? items.filter((ev) => {
         const start = new Date(ev.startDate);
         start.setHours(0, 0, 0, 0);
         const end = new Date(ev.endDate);
         end.setHours(0, 0, 0, 0);
-        const sel = new Date(eventSelectedDate);
+        const sel = new Date(selectedDate);
         sel.setHours(0, 0, 0, 0);
         return sel >= start && sel <= end;
       })
-    : events.filter((ev) => {
-        const monthStart = new Date(eventCalYear, eventCalMonth, 1);
-        const monthEnd = new Date(eventCalYear, eventCalMonth + 1, 0);
+    : items.filter((ev) => {
+        const monthStart = new Date(calYear, calMonth, 1);
+        const monthEnd = new Date(calYear, calMonth + 1, 0);
         const start = new Date(ev.startDate);
         start.setHours(0, 0, 0, 0);
         const end = new Date(ev.endDate);
@@ -326,75 +286,41 @@ export default function Home() {
         return start <= monthEnd && end >= monthStart;
       });
 
-  const handleStatusToggle = (task: Task) => {
-    const next = task.status === "pending" ? "completed" : "pending";
-    updateTask(task.id, { status: next }).catch((err) =>
-      console.error("상태 변경 오류:", err)
-    );
-  };
-
-  const handleTaskDateClick = (day: number) => {
-    const clicked = new Date(taskCalYear, taskCalMonth, day);
+  const handleDateClick = (day: number) => {
+    const clicked = new Date(calYear, calMonth, day);
     if (
-      taskSelectedDate &&
-      taskSelectedDate.getFullYear() === clicked.getFullYear() &&
-      taskSelectedDate.getMonth() === clicked.getMonth() &&
-      taskSelectedDate.getDate() === clicked.getDate()
+      selectedDate &&
+      selectedDate.getFullYear() === clicked.getFullYear() &&
+      selectedDate.getMonth() === clicked.getMonth() &&
+      selectedDate.getDate() === clicked.getDate()
     ) {
-      setTaskSelectedDate(null);
+      setSelectedDate(null);
     } else {
-      setTaskSelectedDate(clicked);
+      setSelectedDate(clicked);
     }
   };
 
-  const handleEventDateClick = (day: number) => {
-    const clicked = new Date(eventCalYear, eventCalMonth, day);
-    if (
-      eventSelectedDate &&
-      eventSelectedDate.getFullYear() === clicked.getFullYear() &&
-      eventSelectedDate.getMonth() === clicked.getMonth() &&
-      eventSelectedDate.getDate() === clicked.getDate()
-    ) {
-      setEventSelectedDate(null);
-    } else {
-      setEventSelectedDate(clicked);
+  const handleExpand = (ev: EventTask) => {
+    if (expandedId === ev.id) {
+      setExpandedId(null);
+      return;
     }
+    setExpandedId(ev.id);
+    setEditUpload(ev.uploadDate ? formatDate(ev.uploadDate) : "");
+    setEditBudget(ev.budget ? String(ev.budget) : "");
   };
 
-  const handleAddChecklistItem = (ev: CalendarEvent) => {
-    if (!newChecklistText.trim()) return;
-    const newItem: ChecklistItem = {
-      id: Date.now().toString(),
-      text: newChecklistText.trim(),
-      completed: false,
-    };
-    const updated = [...ev.checklist, newItem];
-    updateEvent(ev.id, { checklist: updated } as Partial<CalendarEventInput>).catch(console.error);
-    setNewChecklistText("");
+  const handleToggleComplete = (ev: EventTask) => {
+    updateEventTask(ev.id, { completed: !ev.completed } as Partial<EventTaskInput>).catch(console.error);
   };
 
-  const handleToggleChecklistItem = (ev: CalendarEvent, itemId: string) => {
-    const updated = ev.checklist.map((item) =>
-      item.id === itemId ? { ...item, completed: !item.completed } : item
-    );
-    updateEvent(ev.id, { checklist: updated } as Partial<CalendarEventInput>).catch(console.error);
+  const handleSaveUpload = (ev: EventTask) => {
+    const next = editUpload ? new Date(editUpload + "T00:00:00") : null;
+    updateEventTask(ev.id, { uploadDate: next } as Partial<EventTaskInput>).catch(console.error);
   };
 
-  const handleDeleteChecklistItem = (ev: CalendarEvent, itemId: string) => {
-    const updated = ev.checklist.filter((item) => item.id !== itemId);
-    updateEvent(ev.id, { checklist: updated } as Partial<CalendarEventInput>).catch(console.error);
-  };
-
-  const handleToggleOrganizer = (ev: CalendarEvent) => {
-    const newHasOrganizer = !ev.hasOrganizer;
-    const updatedChecklist = ev.checklist.map((item) => ({
-      ...item,
-      completed: newHasOrganizer ? true : false,
-    }));
-    updateEvent(ev.id, {
-      hasOrganizer: newHasOrganizer,
-      checklist: updatedChecklist,
-    } as Partial<CalendarEventInput>).catch(console.error);
+  const handleSaveBudget = (ev: EventTask) => {
+    updateEventTask(ev.id, { budget: Number(editBudget) || 0 } as Partial<EventTaskInput>).catch(console.error);
   };
 
   if (!mounted) return null;
@@ -406,9 +332,17 @@ export default function Home() {
         <div className="mx-auto max-w-7xl flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold text-foreground tracking-tight">AC&apos;SCENT EVENT</h1>
-            <span className="hidden sm:inline text-sm text-muted-foreground">업무 관리 대시보드</span>
+            <span className="hidden sm:inline text-sm text-muted-foreground">이벤트 업무 관리 대시보드</span>
           </div>
           <div className="flex items-center gap-2">
+            <Link href="/report">
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
+                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-6m4 6V7m4 10v-3M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+                리포트
+              </Button>
+            </Link>
             <Link href="/admin">
               <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
                 <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -448,362 +382,202 @@ export default function Home() {
       )}
 
       <main className="mx-auto max-w-7xl p-4 sm:p-6">
-        <Tabs defaultValue="tasks" className="w-full">
-          <TabsList className="mb-6 h-12">
-            <TabsTrigger value="tasks" className="text-base px-8 py-2.5">업무</TabsTrigger>
-            <TabsTrigger value="events" className="text-base px-8 py-2.5">이벤트</TabsTrigger>
-          </TabsList>
-
-          {/* ── Tab 1: 업무 ── */}
-          <TabsContent value="tasks">
-            <div className="flex flex-col lg:flex-row gap-6">
-              {/* Calendar */}
-              <div className="lg:flex-[3] min-w-0">
-                <CalendarView
-                  currentYear={taskCalYear}
-                  currentMonth={taskCalMonth}
-                  selectedDate={taskSelectedDate}
-                  onPrevMonth={() => {
-                    if (taskCalMonth === 0) { setTaskCalMonth(11); setTaskCalYear(taskCalYear - 1); }
-                    else setTaskCalMonth(taskCalMonth - 1);
-                  }}
-                  onNextMonth={() => {
-                    if (taskCalMonth === 11) { setTaskCalMonth(0); setTaskCalYear(taskCalYear + 1); }
-                    else setTaskCalMonth(taskCalMonth + 1);
-                  }}
-                  onDateClick={handleTaskDateClick}
-                  itemMap={taskItemMap}
-                  accentColor="bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                  selectedInfo={
-                    taskSelectedDate ? (
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm text-muted-foreground">
-                          <span className="font-semibold text-foreground">
-                            {taskSelectedDate.getMonth() + 1}월 {taskSelectedDate.getDate()}일
-                          </span>{" "}
-                          업무 {filteredTasks.length}건
-                        </p>
-                        <Button variant="ghost" size="sm" onClick={() => setTaskSelectedDate(null)} className="text-xs">
-                          전체 보기
-                        </Button>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground text-center">날짜를 클릭하면 해당 날짜의 업무만 표시됩니다</p>
-                    )
-                  }
-                />
-              </div>
-
-              {/* Task List (read-only) */}
-              <div className="lg:flex-[2] min-w-0">
-                <h2 className="text-lg font-semibold text-foreground mb-4">
-                  업무 목록
-                  <span className="ml-2 text-sm font-normal text-muted-foreground">{filteredTasks.length}건</span>
-                </h2>
-
-                {taskLoading ? (
-                  <div className="space-y-3">
-                    {[1, 2, 3].map((i) => (
-                      <Card key={i}><CardContent className="p-5"><div className="animate-pulse space-y-3"><div className="h-4 bg-muted rounded w-3/4" /><div className="h-3 bg-muted rounded w-full" /></div></CardContent></Card>
-                    ))}
+        <div className="flex flex-col lg:flex-row gap-6">
+          {/* Calendar */}
+          <div className="lg:flex-[3] min-w-0">
+            <CalendarView
+              currentYear={calYear}
+              currentMonth={calMonth}
+              selectedDate={selectedDate}
+              onPrevMonth={() => {
+                if (calMonth === 0) { setCalMonth(11); setCalYear(calYear - 1); }
+                else setCalMonth(calMonth - 1);
+              }}
+              onNextMonth={() => {
+                if (calMonth === 11) { setCalMonth(0); setCalYear(calYear + 1); }
+                else setCalMonth(calMonth + 1);
+              }}
+              onDateClick={handleDateClick}
+              itemMap={itemMap}
+              selectedInfo={
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 justify-center">
+                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <span className="w-3 h-3 rounded-sm bg-violet-100 dark:bg-violet-950 border border-violet-300 dark:border-violet-700" /> 와우
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <span className="w-3 h-3 rounded-sm bg-pink-100 dark:bg-pink-950 border border-pink-300 dark:border-pink-700" /> 아이디
+                    </span>
                   </div>
-                ) : filteredTasks.length === 0 ? (
-                  <Card>
-                    <CardContent className="p-12 text-center">
-                      <p className="text-muted-foreground">
-                        {taskSelectedDate ? "해당 날짜에 업무가 없습니다." : `${taskCalMonth + 1}월에 등록된 업무가 없습니다.`}
+                  {selectedDate ? (
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        <span className="font-semibold text-foreground">
+                          {selectedDate.getMonth() + 1}월 {selectedDate.getDate()}일
+                        </span>{" "}
+                        이벤트 {filteredItems.length}건
                       </p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="space-y-3">
-                    {filteredTasks.map((task) => {
-                          const dday = getDDay(task.deadline);
-                          return (
-                            <Card
-                              key={task.id}
-                              className={`transition-shadow hover:shadow-md ${task.status === "completed" ? "opacity-60" : ""}`}
-                            >
-                              <CardContent className="p-4 sm:p-5">
-                                <div className="flex items-start gap-3">
-                                  {/* Status toggle */}
-                                  <button
-                                    onClick={() => handleStatusToggle(task)}
-                                    className={`mt-0.5 shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
-                                      task.status === "completed"
-                                        ? "bg-emerald-500 border-emerald-500 text-white"
-                                        : "border-muted-foreground/30 hover:border-muted-foreground/50"
-                                    }`}
-                                    title={task.status === "completed" ? "미완료로 변경" : "완료로 변경"}
-                                  >
-                                    {task.status === "completed" && (
-                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                      </svg>
-                                    )}
-                                  </button>
-
-                                  {/* Content */}
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                                      <h3 className={`font-semibold text-foreground ${task.status === "completed" ? "line-through text-muted-foreground" : ""}`}>
-                                        {task.title}
-                                      </h3>
-                                      <Badge variant="secondary" className={`text-[11px] px-1.5 py-0 ${STATUS_STYLES[task.status]}`}>
-                                        {STATUS_LABELS[task.status]}
-                                      </Badge>
-                                      <span className="text-amber-500 dark:text-amber-400 text-xs">
-                                        {PRIORITY_STARS[task.priority ?? "medium"]}
-                                      </span>
-                                      {dday.urgent && task.status !== "completed" && (
-                                        <Badge variant="destructive" className="text-[11px] px-1.5 py-0 animate-pulse">마감 임박</Badge>
-                                      )}
-                                    </div>
-                                    <div className="text-sm text-muted-foreground space-y-0.5 mt-1">
-                                      {task.eventPeriod && (
-                                        <p className="flex items-center gap-1.5">
-                                          <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                          </svg>
-                                          {task.eventPeriod}
-                                        </p>
-                                      )}
-                                      {task.location && (
-                                        <p className="flex items-center gap-1.5">
-                                          <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                                          </svg>
-                                          {task.location}
-                                        </p>
-                                      )}
-                                      {task.notes && (
-                                        <p className="flex items-start gap-1.5">
-                                          <svg className="w-3.5 h-3.5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                          </svg>
-                                          <span className="line-clamp-2">{task.notes}</span>
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {/* Right side */}
-                                  <div className="shrink-0 text-right flex flex-col items-end gap-1.5">
-                                    {task.designDeadline && (
-                                      <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
-                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14" />
-                                        </svg>
-                                        디자인 마감 {formatShortDate(task.designDeadline)}
-                                      </span>
-                                    )}
-                                    <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                      </svg>
-                                      기획 마감 {formatShortDate(task.deadline)}
-                                    </span>
-                                    <p className={`text-sm font-bold ${
-                                      dday.passed ? "text-destructive" : dday.text === "D-Day" ? "text-orange-500" : dday.urgent ? "text-red-500" : "text-primary"
-                                    }`}>
-                                      {dday.text}
-                                    </p>
-                                  </div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          );
-                        })}
-                  </div>
-                )}
-              </div>
-            </div>
-          </TabsContent>
-
-          {/* ── Tab 2: 이벤트 ── */}
-          <TabsContent value="events">
-            <div className="flex flex-col lg:flex-row gap-6">
-              {/* Event Calendar */}
-              <div className="lg:flex-[3] min-w-0">
-                <CalendarView
-                  currentYear={eventCalYear}
-                  currentMonth={eventCalMonth}
-                  selectedDate={eventSelectedDate}
-                  onPrevMonth={() => {
-                    if (eventCalMonth === 0) { setEventCalMonth(11); setEventCalYear(eventCalYear - 1); }
-                    else setEventCalMonth(eventCalMonth - 1);
-                  }}
-                  onNextMonth={() => {
-                    if (eventCalMonth === 11) { setEventCalMonth(0); setEventCalYear(eventCalYear + 1); }
-                    else setEventCalMonth(eventCalMonth + 1);
-                  }}
-                  onDateClick={handleEventDateClick}
-                  itemMap={eventItemMap}
-                  accentColor="bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300"
-                  selectedInfo={
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3 justify-center">
-                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                          <span className="w-3 h-3 rounded-sm bg-violet-100 dark:bg-violet-950 border border-violet-300 dark:border-violet-700" /> 와우
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                          <span className="w-3 h-3 rounded-sm bg-pink-100 dark:bg-pink-950 border border-pink-300 dark:border-pink-700" /> 아이디
-                        </span>
-                      </div>
-                      {eventSelectedDate ? (
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm text-muted-foreground">
-                            <span className="font-semibold text-foreground">
-                              {eventSelectedDate.getMonth() + 1}월 {eventSelectedDate.getDate()}일
-                            </span>{" "}
-                            이벤트 {filteredEvents.length}건
-                          </p>
-                          <Button variant="ghost" size="sm" onClick={() => setEventSelectedDate(null)} className="text-xs">
-                            전체 보기
-                          </Button>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground text-center">날짜를 클릭하면 해당 날짜의 이벤트만 표시됩니다</p>
-                      )}
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedDate(null)} className="text-xs">
+                        전체 보기
+                      </Button>
                     </div>
-                  }
-                />
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center">날짜를 클릭하면 해당 날짜의 이벤트만 표시됩니다</p>
+                  )}
+                </div>
+              }
+            />
+          </div>
+
+          {/* List */}
+          <div className="lg:flex-[2] min-w-0">
+            <h2 className="text-lg font-semibold text-foreground mb-4">
+              이벤트 업무 목록
+              <span className="ml-2 text-sm font-normal text-muted-foreground">{filteredItems.length}건</span>
+            </h2>
+
+            {loading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <Card key={i}><CardContent className="p-5"><div className="animate-pulse space-y-3"><div className="h-4 bg-muted rounded w-3/4" /><div className="h-3 bg-muted rounded w-full" /></div></CardContent></Card>
+                ))}
               </div>
+            ) : filteredItems.length === 0 ? (
+              <Card>
+                <CardContent className="p-12 text-center">
+                  <p className="text-muted-foreground">
+                    {selectedDate ? "해당 날짜에 이벤트가 없습니다." : `${calMonth + 1}월에 등록된 이벤트가 없습니다.`}
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {filteredItems.map((ev) => {
+                  const isExpanded = expandedId === ev.id;
+                  const planDday = ev.planningDeadline ? getDDay(ev.planningDeadline) : null;
+                  return (
+                    <Card key={ev.id} className={`transition-shadow hover:shadow-md ${ev.completed ? "opacity-60" : ""}`}>
+                      <CardContent className="p-4 sm:p-5">
+                        <div className="flex items-start gap-3">
+                          {/* 완료 토글 */}
+                          <button
+                            onClick={() => handleToggleComplete(ev)}
+                            className={`mt-0.5 shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                              ev.completed
+                                ? "bg-emerald-500 border-emerald-500 text-white"
+                                : "border-muted-foreground/30 hover:border-muted-foreground/50"
+                            }`}
+                            title={ev.completed ? "미완료로 변경" : "완료로 변경"}
+                          >
+                            {ev.completed && (
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </button>
 
-              {/* Event List */}
-              <div className="lg:flex-[2] min-w-0">
-                <h2 className="text-lg font-semibold text-foreground mb-4">
-                  이벤트 목록
-                  <span className="ml-2 text-sm font-normal text-muted-foreground">{filteredEvents.length}건</span>
-                </h2>
+                          <button
+                            className="flex-1 min-w-0 text-left"
+                            onClick={() => handleExpand(ev)}
+                          >
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge variant="secondary" className={`text-[11px] px-1.5 py-0 ${LOCATION_BADGE[ev.location]}`}>
+                              {ev.location}
+                            </Badge>
+                            {formatRound(ev.roundMonth, ev.roundSession) && (
+                              <Badge variant="outline" className="text-[11px] px-1.5 py-0">{formatRound(ev.roundMonth, ev.roundSession)}</Badge>
+                            )}
+                            <h3 className={`font-semibold text-foreground ${ev.completed ? "line-through text-muted-foreground" : ""}`}>{ev.title}</h3>
+                            {ev.completed && (
+                              <Badge variant="secondary" className="text-[11px] px-1.5 py-0 ml-auto bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                                완료
+                              </Badge>
+                            )}
+                            <svg className={`w-4 h-4 shrink-0 text-muted-foreground transition-transform ${ev.completed ? "" : "ml-auto"} ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
 
-                {eventLoading ? (
-                  <div className="space-y-3">
-                    {[1, 2].map((i) => (
-                      <Card key={i}><CardContent className="p-5"><div className="animate-pulse space-y-3"><div className="h-4 bg-muted rounded w-3/4" /><div className="h-3 bg-muted rounded w-full" /></div></CardContent></Card>
-                    ))}
-                  </div>
-                ) : filteredEvents.length === 0 ? (
-                  <Card>
-                    <CardContent className="p-12 text-center">
-                      <p className="text-muted-foreground">
-                        {eventSelectedDate ? "해당 날짜에 이벤트가 없습니다." : `${eventCalMonth + 1}월에 등록된 이벤트가 없습니다.`}
-                      </p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="space-y-3">
-                    {filteredEvents.map((ev) => {
-                      const isExpanded = expandedEventId === ev.id;
-                      const completedCount = ev.checklist.filter((c) => c.completed).length;
-                      return (
-                        <Card key={ev.id} className="transition-shadow hover:shadow-md">
-                          <CardContent className="p-4 sm:p-5">
-                            <button
-                              className="w-full text-left"
-                              onClick={() => setExpandedEventId(isExpanded ? null : ev.id)}
-                            >
-                              <div className="flex items-center gap-2">
-                                <Badge variant="secondary" className={`text-[11px] px-1.5 py-0 ${ev.location === "아이디" ? "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300" : "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300"}`}>
-                                  {ev.location}
-                                </Badge>
-                                <h3 className="font-semibold text-foreground">{ev.title}</h3>
-                                {ev.checklist.length > 0 && (
-                                  <span className={`text-[11px] ml-auto ${ev.hasOrganizer ? "text-emerald-600 dark:text-emerald-400 font-medium" : "text-muted-foreground"}`}>
-                                    {ev.hasOrganizer ? "주최자 있음" : `${completedCount}/${ev.checklist.length}`}
+                          <p className="text-sm text-muted-foreground mt-1.5">
+                            {formatShortDate(ev.startDate)} ~ {formatShortDate(ev.endDate)}
+                          </p>
+
+                          {/* 마감/업로드/예산 배지 */}
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            {ev.planningDeadline && (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                                기획 {formatShortDate(ev.planningDeadline)}
+                                {planDday && (
+                                  <span className={planDday.passed ? "text-destructive" : planDday.urgent ? "text-red-500 dark:text-red-400 font-semibold" : "opacity-70"}>
+                                    ({planDday.text})
                                   </span>
                                 )}
-                                <svg className={`w-4 h-4 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                </svg>
-                              </div>
-                              <p className="text-sm text-muted-foreground mt-1">
-                                {formatShortDate(ev.startDate)} ~ {formatShortDate(ev.endDate)}
-                              </p>
-                              {ev.notes && (
-                                <p className="text-sm text-muted-foreground mt-1.5 flex items-start gap-1.5">
-                                  <svg className="w-3.5 h-3.5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                  </svg>
-                                  <span className="line-clamp-3">{ev.notes}</span>
-                                </p>
-                              )}
-                            </button>
-
-                            {isExpanded && (
-                              <div className="mt-3 pt-3 border-t border-border">
-                                <div className="flex items-center justify-between mb-2">
-                                  <p className="text-xs font-semibold text-muted-foreground">체크리스트</p>
-                                  <Button
-                                    variant={ev.hasOrganizer ? "default" : "outline"}
-                                    size="sm"
-                                    className={`h-6 text-[11px] px-2 ${ev.hasOrganizer ? "bg-emerald-500 hover:bg-emerald-600 text-white" : ""}`}
-                                    onClick={() => handleToggleOrganizer(ev)}
-                                  >
-                                    주최자 있음
-                                  </Button>
-                                </div>
-                                {ev.checklist.length > 0 && (
-                                  <div className="space-y-1.5 mb-3">
-                                    {ev.checklist.map((item) => (
-                                      <div key={item.id} className="flex items-center gap-2 group">
-                                        <button
-                                          onClick={() => handleToggleChecklistItem(ev, item.id)}
-                                          className={`shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                                            item.completed
-                                              ? "bg-emerald-500 border-emerald-500 text-white"
-                                              : "border-muted-foreground/30 hover:border-muted-foreground/50"
-                                          }`}
-                                        >
-                                          {item.completed && (
-                                            <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
-                                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                            </svg>
-                                          )}
-                                        </button>
-                                        <span className={`text-sm flex-1 ${item.completed ? "line-through text-muted-foreground" : "text-foreground"}`}>
-                                          {item.text}
-                                        </span>
-                                        <button
-                                          onClick={() => handleDeleteChecklistItem(ev, item.id)}
-                                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0"
-                                          title="삭제"
-                                        >
-                                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                          </svg>
-                                        </button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                                <form
-                                  onSubmit={(e) => { e.preventDefault(); handleAddChecklistItem(ev); }}
-                                  className="flex gap-2"
-                                >
-                                  <Input
-                                    placeholder="항목 추가..."
-                                    value={expandedEventId === ev.id ? newChecklistText : ""}
-                                    onChange={(e) => setNewChecklistText(e.target.value)}
-                                    className="h-8 text-sm"
-                                  />
-                                  <Button type="submit" size="sm" variant="outline" className="h-8 px-3 shrink-0" disabled={!newChecklistText.trim()}>
-                                    추가
-                                  </Button>
-                                </form>
-                              </div>
+                              </span>
                             )}
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
-                )}
+                            {ev.designDeadline && (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+                                디자인 {formatShortDate(ev.designDeadline)}
+                              </span>
+                            )}
+                            {ev.uploadDate && (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                                업로드 {formatShortDate(ev.uploadDate)}
+                              </span>
+                            )}
+                            {ev.budget > 0 && (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                                예산 {ev.budget.toLocaleString()}원
+                              </span>
+                            )}
+                          </div>
+
+                          {ev.notes && (
+                            <p className="text-sm text-muted-foreground mt-2 flex items-start gap-1.5">
+                              <svg className="w-3.5 h-3.5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                              <span className="line-clamp-3">{ev.notes}</span>
+                            </p>
+                          )}
+                          </button>
+                        </div>
+
+                        {isExpanded && (
+                          <div className="mt-3 pt-3 border-t border-border">
+                            {/* 직원 입력: 업로드일 / 예산 */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-xs font-semibold text-muted-foreground">이벤트 업로드일</label>
+                                <Input
+                                  type="date"
+                                  value={editUpload}
+                                  onChange={(e) => setEditUpload(e.target.value)}
+                                  onBlur={() => handleSaveUpload(ev)}
+                                  className="h-8 text-sm mt-1"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs font-semibold text-muted-foreground">총 예산 (원)</label>
+                                <Input
+                                  type="number"
+                                  placeholder="0"
+                                  value={editBudget}
+                                  onChange={(e) => setEditBudget(e.target.value)}
+                                  onBlur={() => handleSaveBudget(ev)}
+                                  className="h-8 text-sm mt-1"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
-            </div>
-          </TabsContent>
-        </Tabs>
+            )}
+          </div>
+        </div>
       </main>
     </div>
   );

@@ -1,53 +1,48 @@
 export type EventLocation = "와우" | "아이디";
 
-export interface ChecklistItem {
+/**
+ * 이벤트 업무 — 관리자가 입력하는 기획 정보와
+ * 직원이 입력하는 진행 정보를 하나로 합친 단일 항목.
+ */
+export interface EventTask {
   id: string;
-  text: string;
-  completed: boolean;
-}
-
-export interface CalendarEvent {
-  id: string;
-  title: string;
-  startDate: Date;
-  endDate: Date;
-  location: EventLocation;
-  notes: string;
-  revenue: number;
-  visitors: number;
-  checklist: ChecklistItem[];
-  hasOrganizer: boolean;
+  // ── 관리자 입력 항목 ──
+  title: string;                 // 이벤트 제목
+  roundMonth: number | null;     // 차수 - 월 (예: 7)
+  roundSession: number | null;   // 차수 - 차시 (예: 1)
+  location: EventLocation;       // 장소
+  startDate: Date;               // 이벤트 기간 시작
+  endDate: Date;                 // 이벤트 기간 종료
+  planningDeadline: Date | null; // 기획 마감일
+  designDeadline: Date | null;   // 디자인 마감일
+  notes: string;                 // 특이사항
+  // ── 직원 입력 항목 ──
+  uploadDate: Date | null;       // 이벤트 업로드일
+  budget: number;                // 총 예산
+  completed: boolean;            // 업무 완료 여부
+  // ── 메타 ──
+  order: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export const DEFAULT_CHECKLIST_TEXTS = [
-  "기획안",
-  "동발주전달",
-  "X 세팅",
-  "디피물품&굿즈 구매",
-  "X&사이트 업로드",
-  "디피",
-  "이벤트 종료 및 추가 안내",
-  "알티 선물 발송",
-];
-
-export function createDefaultChecklist(): ChecklistItem[] {
-  return DEFAULT_CHECKLIST_TEXTS.map((text, i) => ({
-    id: `default-${i}`,
-    text,
-    completed: false,
-  }));
+/** 차수 표시 문자열 (예: 7월 1차 → "7-1") */
+export function formatRound(month: number | null, session: number | null): string {
+  if (month == null || session == null) return "";
+  return `${month}-${session}`;
 }
 
-export interface CalendarEventInput {
+export interface EventTaskInput {
   title: string;
+  roundMonth?: number | null;
+  roundSession?: number | null;
+  location?: EventLocation;
   startDate: Date;
   endDate: Date;
-  location?: EventLocation;
+  planningDeadline?: Date | null;
+  designDeadline?: Date | null;
   notes: string;
-  revenue?: number;
-  visitors?: number;
-  checklist?: ChecklistItem[];
-  hasOrganizer?: boolean;
+  uploadDate?: Date | null;
+  budget?: number;
+  completed?: boolean;
 }
