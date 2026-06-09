@@ -58,22 +58,26 @@ function getDDay(deadline: Date): { text: string; urgent: boolean; passed: boole
   return { text: `D+${Math.abs(diff)}`, urgent: false, passed: true };
 }
 
-function groupByMonth<T>(items: T[], getDate: (item: T) => Date): { key: string; label: string; items: T[] }[] {
-  const groups = new Map<string, T[]>();
-  const sorted = [...items].sort((a, b) => getDate(a).getTime() - getDate(b).getTime());
-  sorted.forEach((item) => {
-    const d = getDate(item);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+// 차수의 '월'(roundMonth) 기준으로 그룹핑. 차수 미지정은 '기타'로 묶고 맨 뒤에 배치.
+function groupByRoundMonth(items: EventTask[]): { key: string; label: string; items: EventTask[] }[] {
+  const groups = new Map<string, EventTask[]>();
+  items.forEach((item) => {
+    const key = item.roundMonth != null ? String(item.roundMonth) : "기타";
     const arr = groups.get(key) ?? [];
     arr.push(item);
     groups.set(key, arr);
   });
   return Array.from(groups.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, grpItems]) => {
-      const [y, m] = key.split("-");
-      return { key, label: `${y}년 ${parseInt(m)}월`, items: grpItems };
-    });
+    .sort(([a], [b]) => {
+      if (a === "기타") return 1;
+      if (b === "기타") return -1;
+      return Number(a) - Number(b);
+    })
+    .map(([key, grpItems]) => ({
+      key,
+      label: key === "기타" ? "차수 미지정" : `${key}월`,
+      items: [...grpItems].sort((x, y) => (x.roundSession ?? 999) - (y.roundSession ?? 999)),
+    }));
 }
 
 const LOCATION_BADGE: Record<EventLocation, string> = {
@@ -210,15 +214,21 @@ function AdminDashboard() {
     setDialogOpen(true);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!fTitle.trim()) return;
+    const startDate = new Date(fStartDate + "T00:00:00");
+    const endDate = new Date(fEndDate + "T00:00:00");
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      alert("이벤트 시작일/종료일을 확인해주세요.");
+      return;
+    }
     const input: EventTaskInput = {
       title: fTitle.trim(),
       roundMonth: fRoundMonth ? Number(fRoundMonth) : null,
       roundSession: fRoundSession ? Number(fRoundSession) : null,
       location: fLocation,
-      startDate: new Date(fStartDate + "T00:00:00"),
-      endDate: new Date(fEndDate + "T00:00:00"),
+      startDate,
+      endDate,
       planningDeadline: fPlanningDeadline ? new Date(fPlanningDeadline + "T00:00:00") : null,
       designDeadline: fDesignDeadline ? new Date(fDesignDeadline + "T00:00:00") : null,
       notes: fNotes.trim(),
@@ -226,12 +236,21 @@ function AdminDashboard() {
       budget: Number(fBudget) || 0,
       completed: fCompleted,
     };
-    if (editing) {
-      updateEventTask(editing.id, input).catch(console.error);
-    } else {
-      const maxOrder = items.reduce((max, t) => Math.max(max, t.order), 0);
-      addEventTask(input, maxOrder + 1).catch(console.error);
+    // 저장된 업무가 보이도록 이동할 차수(월) 탭 키 (예: "6")
+    const monthKey = input.roundMonth != null ? String(input.roundMonth) : "기타";
+    try {
+      if (editing) {
+        await updateEventTask(editing.id, input);
+      } else {
+        const maxOrder = items.reduce((max, t) => Math.max(max, t.order), 0);
+        await addEventTask(input, maxOrder + 1);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("저장에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
+      return;
     }
+    setSelectedMonth(monthKey);
     setDialogOpen(false);
     resetForm();
   };
@@ -241,7 +260,7 @@ function AdminDashboard() {
     deleteEventTask(id).catch(console.error);
   };
 
-  const groups = groupByMonth(items, (t) => t.startDate);
+  const groups = groupByRoundMonth(items);
 
   const handleLogout = () => {
     sessionStorage.removeItem("admin_auth");

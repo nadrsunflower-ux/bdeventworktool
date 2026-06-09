@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import type { EventTask, EventTaskInput, EventLocation } from "@/types/event";
 import { formatRound } from "@/types/event";
 import { subscribeEventTasks, updateEventTask } from "@/lib/events";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import XAccountPanel from "@/components/x-account-panel";
 import Link from "next/link";
 
 const DAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -234,57 +236,37 @@ export default function Home() {
     return () => unsub();
   }, []);
 
-  /* 달력 아이템 맵: 이벤트 기간을 range bar로 표시 */
+  /* 달력 아이템 맵: 기획 마감일을 단일 마커로 표시 */
   const itemMap = new Map<string, CalendarItem[]>();
   items.forEach((ev) => {
-    const start = new Date(ev.startDate);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(ev.endDate);
-    end.setHours(0, 0, 0, 0);
-    const isSingleDay = start.getTime() === end.getTime();
-    const cursor = new Date(start);
-    while (cursor <= end) {
-      const key = `${cursor.getFullYear()}-${cursor.getMonth()}-${cursor.getDate()}`;
-      let position: "single" | "start" | "middle" | "end" = "single";
-      if (!isSingleDay) {
-        const isFirst = cursor.getTime() === start.getTime();
-        const isLast = cursor.getTime() === end.getTime();
-        const dow = cursor.getDay();
-        const visualStart = isFirst || dow === 0;
-        const visualEnd = isLast || dow === 6;
-        if (visualStart && visualEnd) position = "single";
-        else if (visualStart) position = "start";
-        else if (visualEnd) position = "end";
-        else position = "middle";
-      }
-      const arr = itemMap.get(key) ?? [];
-      const roundLabel = formatRound(ev.roundMonth, ev.roundSession);
-      const label = roundLabel ? `${roundLabel} ${ev.title}` : ev.title;
-      arr.push({ title: label, position, color: EVENT_LOCATION_COLORS[ev.location] });
-      itemMap.set(key, arr);
-      cursor.setDate(cursor.getDate() + 1);
-    }
+    if (!ev.planningDeadline) return;
+    const dl = new Date(ev.planningDeadline);
+    dl.setHours(0, 0, 0, 0);
+    const key = `${dl.getFullYear()}-${dl.getMonth()}-${dl.getDate()}`;
+    const arr = itemMap.get(key) ?? [];
+    const roundLabel = formatRound(ev.roundMonth, ev.roundSession);
+    const label = roundLabel ? `${roundLabel} ${ev.title}` : ev.title;
+    arr.push({ title: label, position: "single", color: EVENT_LOCATION_COLORS[ev.location] });
+    itemMap.set(key, arr);
   });
 
-  const filteredItems = selectedDate
-    ? items.filter((ev) => {
-        const start = new Date(ev.startDate);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(ev.endDate);
-        end.setHours(0, 0, 0, 0);
-        const sel = new Date(selectedDate);
-        sel.setHours(0, 0, 0, 0);
-        return sel >= start && sel <= end;
-      })
-    : items.filter((ev) => {
-        const monthStart = new Date(calYear, calMonth, 1);
-        const monthEnd = new Date(calYear, calMonth + 1, 0);
-        const start = new Date(ev.startDate);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(ev.endDate);
-        end.setHours(0, 0, 0, 0);
-        return start <= monthEnd && end >= monthStart;
-      });
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+
+  /* 목록: 기획 마감일 기준 필터 (마감일 오름차순) */
+  const filteredItems = (
+    selectedDate
+      ? items.filter((ev) => ev.planningDeadline && sameDay(ev.planningDeadline, selectedDate))
+      : items.filter((ev) => {
+          if (!ev.planningDeadline) return false;
+          const dl = ev.planningDeadline;
+          return dl.getFullYear() === calYear && dl.getMonth() === calMonth;
+        })
+  ).sort(
+    (a, b) => (a.planningDeadline?.getTime() ?? 0) - (b.planningDeadline?.getTime() ?? 0)
+  );
 
   const handleDateClick = (day: number) => {
     const clicked = new Date(calYear, calMonth, day);
@@ -382,6 +364,13 @@ export default function Home() {
       )}
 
       <main className="mx-auto max-w-7xl p-4 sm:p-6">
+        <Tabs defaultValue="events">
+          <TabsList className="mb-5">
+            <TabsTrigger value="events">이벤트 일정</TabsTrigger>
+            <TabsTrigger value="accounts">X 계정 관리</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="events">
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Calendar */}
           <div className="lg:flex-[3] min-w-0">
@@ -415,14 +404,14 @@ export default function Home() {
                         <span className="font-semibold text-foreground">
                           {selectedDate.getMonth() + 1}월 {selectedDate.getDate()}일
                         </span>{" "}
-                        이벤트 {filteredItems.length}건
+                        기획 마감 {filteredItems.length}건
                       </p>
                       <Button variant="ghost" size="sm" onClick={() => setSelectedDate(null)} className="text-xs">
                         전체 보기
                       </Button>
                     </div>
                   ) : (
-                    <p className="text-sm text-muted-foreground text-center">날짜를 클릭하면 해당 날짜의 이벤트만 표시됩니다</p>
+                    <p className="text-sm text-muted-foreground text-center">날짜를 클릭하면 해당 기획 마감일의 업무만 표시됩니다</p>
                   )}
                 </div>
               }
@@ -432,7 +421,7 @@ export default function Home() {
           {/* List */}
           <div className="lg:flex-[2] min-w-0">
             <h2 className="text-lg font-semibold text-foreground mb-4">
-              이벤트 업무 목록
+              기획 마감 목록
               <span className="ml-2 text-sm font-normal text-muted-foreground">{filteredItems.length}건</span>
             </h2>
 
@@ -446,7 +435,7 @@ export default function Home() {
               <Card>
                 <CardContent className="p-12 text-center">
                   <p className="text-muted-foreground">
-                    {selectedDate ? "해당 날짜에 이벤트가 없습니다." : `${calMonth + 1}월에 등록된 이벤트가 없습니다.`}
+                    {selectedDate ? "해당 날짜에 기획 마감 업무가 없습니다." : `${calMonth + 1}월 기획 마감 업무가 없습니다.`}
                   </p>
                 </CardContent>
               </Card>
@@ -578,6 +567,12 @@ export default function Home() {
             )}
           </div>
         </div>
+          </TabsContent>
+
+          <TabsContent value="accounts">
+            <XAccountPanel />
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );

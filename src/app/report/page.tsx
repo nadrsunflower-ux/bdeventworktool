@@ -20,13 +20,19 @@ const LOCATION_BADGE: Record<EventLocation, string> = {
   "아이디": "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300",
 };
 
-function monthKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+// 차수의 '월'(roundMonth) 기준 그룹 키
+function roundKeyOf(i: EventTask): string {
+  return i.roundMonth != null ? String(i.roundMonth) : "기타";
 }
 
-function monthLabel(key: string): string {
-  const [y, m] = key.split("-");
-  return `${y}년 ${parseInt(m)}월`;
+function roundLabel(key: string): string {
+  return key === "기타" ? "차수 미지정" : `${key}월`;
+}
+
+function sortRoundKeys(a: string, b: string): number {
+  if (a === "기타") return 1;
+  if (b === "기타") return -1;
+  return Number(a) - Number(b);
 }
 
 export default function ReportPage() {
@@ -47,14 +53,22 @@ export default function ReportPage() {
 
   if (!mounted) return null;
 
-  const months = Array.from(new Set(items.map((i) => monthKey(i.startDate)))).sort();
+  const months = Array.from(new Set(items.map(roundKeyOf))).sort(sortRoundKeys);
 
   const filtered =
     selectedMonth === "all"
       ? items
-      : items.filter((i) => monthKey(i.startDate) === selectedMonth);
+      : items.filter((i) => roundKeyOf(i) === selectedMonth);
 
-  const sorted = [...filtered].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+  const sorted = [...filtered].sort((a, b) => {
+    const am = a.roundMonth ?? 999;
+    const bm = b.roundMonth ?? 999;
+    if (am !== bm) return am - bm;
+    const as = a.roundSession ?? 999;
+    const bs = b.roundSession ?? 999;
+    if (as !== bs) return as - bs;
+    return a.startDate.getTime() - b.startDate.getTime();
+  });
 
   const totalBudget = filtered.reduce((sum, i) => sum + (i.budget || 0), 0);
   const uploadedCount = filtered.filter((i) => i.uploadDate).length;
@@ -112,7 +126,7 @@ export default function ReportPage() {
             <span className="ml-1 text-xs opacity-70">{items.length}</span>
           </button>
           {months.map((m) => {
-            const count = items.filter((i) => monthKey(i.startDate) === m).length;
+            const count = items.filter((i) => roundKeyOf(i) === m).length;
             return (
               <button
                 key={m}
@@ -123,7 +137,7 @@ export default function ReportPage() {
                     : "bg-muted text-muted-foreground hover:bg-muted/80"
                 }`}
               >
-                {monthLabel(m)}
+                {roundLabel(m)}
                 <span className="ml-1 text-xs opacity-70">{count}</span>
               </button>
             );
