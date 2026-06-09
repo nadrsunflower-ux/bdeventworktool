@@ -43,6 +43,7 @@ export default function XAccountPanel() {
   const [items, setItems] = useState<XAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("전체");
+  const [search, setSearch] = useState("");
   const [revealAll, setRevealAll] = useState(false);
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
 
@@ -130,13 +131,23 @@ export default function XAccountPanel() {
     });
   };
 
+  const q = search.trim().toLowerCase();
+  const searched = q
+    ? items.filter(
+        (i) =>
+          i.name.toLowerCase().includes(q) ||
+          i.twitterId.toLowerCase().includes(q) ||
+          i.email.toLowerCase().includes(q)
+      )
+    : items;
+
   const counts = X_ACCOUNT_STATUSES.reduce<Record<string, number>>((acc, s) => {
-    acc[s] = items.filter((i) => i.status === s).length;
+    acc[s] = searched.filter((i) => i.status === s).length;
     return acc;
   }, {});
 
   const filtered =
-    filter === "전체" ? items : items.filter((i) => i.status === filter);
+    filter === "전체" ? searched : searched.filter((i) => i.status === filter);
 
   return (
     <div>
@@ -214,10 +225,35 @@ export default function XAccountPanel() {
         </div>
       </div>
 
+      {/* 검색 */}
+      <div className="relative mb-3">
+        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" />
+        </svg>
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="이름 · 트위터 아이디 · 메일 검색"
+          className="pl-9 pr-9"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch("")}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            title="검색 지우기"
+            type="button"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
+      </div>
+
       {/* 상태 필터 */}
       <div className="flex gap-2 flex-wrap mb-4">
         {FILTERS.map((f) => {
-          const count = f === "전체" ? items.length : counts[f] ?? 0;
+          const count = f === "전체" ? searched.length : counts[f] ?? 0;
           return (
             <button
               key={f}
@@ -239,7 +275,9 @@ export default function XAccountPanel() {
       {loading ? (
         <Card><CardContent className="p-12 text-center text-muted-foreground">불러오는 중...</CardContent></Card>
       ) : filtered.length === 0 ? (
-        <Card><CardContent className="p-12 text-center text-muted-foreground">표시할 계정이 없습니다.</CardContent></Card>
+        <Card><CardContent className="p-12 text-center text-muted-foreground">
+          {q ? `'${search.trim()}' 검색 결과가 없습니다.` : "표시할 계정이 없습니다."}
+        </CardContent></Card>
       ) : (
         <Card>
           <CardContent className="p-0 overflow-x-auto">
