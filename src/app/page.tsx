@@ -371,7 +371,7 @@ export default function Home() {
           </TabsList>
 
           <TabsContent value="events">
-        <div className="flex flex-col lg:flex-row gap-6">
+        <div className="flex flex-col lg:flex-row-reverse gap-6">
           {/* Calendar */}
           <div className="lg:flex-[3] min-w-0">
             <CalendarView
@@ -487,38 +487,46 @@ export default function Home() {
                             </svg>
                           </div>
 
-                          <p className="text-sm text-muted-foreground mt-1.5">
-                            {formatShortDate(ev.startDate)} ~ {formatShortDate(ev.endDate)}
+                          {/* 기획 · 디자인 마감 (이벤트 진행 일정보다 상단 강조) */}
+                          {(ev.planningDeadline || ev.designDeadline) && (
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {ev.planningDeadline && (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                                  기획 {formatShortDate(ev.planningDeadline)}
+                                  {planDday && (
+                                    <span className={planDday.passed ? "text-destructive" : planDday.urgent ? "text-red-500 dark:text-red-400 font-semibold" : "opacity-70"}>
+                                      ({planDday.text})
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                              {ev.designDeadline && (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+                                  디자인 {formatShortDate(ev.designDeadline)}
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          <p className="text-sm text-muted-foreground mt-2">
+                            이벤트 진행 {formatShortDate(ev.startDate)} ~ {formatShortDate(ev.endDate)}
                           </p>
 
-                          {/* 마감/업로드/예산 배지 */}
-                          <div className="flex flex-wrap gap-1.5 mt-2">
-                            {ev.planningDeadline && (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                                기획 {formatShortDate(ev.planningDeadline)}
-                                {planDday && (
-                                  <span className={planDday.passed ? "text-destructive" : planDday.urgent ? "text-red-500 dark:text-red-400 font-semibold" : "opacity-70"}>
-                                    ({planDday.text})
-                                  </span>
-                                )}
-                              </span>
-                            )}
-                            {ev.designDeadline && (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
-                                디자인 {formatShortDate(ev.designDeadline)}
-                              </span>
-                            )}
-                            {ev.uploadDate && (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                                업로드 {formatShortDate(ev.uploadDate)}
-                              </span>
-                            )}
-                            {ev.budget > 0 && (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                                예산 {ev.budget.toLocaleString()}원
-                              </span>
-                            )}
-                          </div>
+                          {/* 업로드 · 예산 */}
+                          {(ev.uploadDate || ev.budget > 0) && (
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {ev.uploadDate && (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                                  업로드 {formatShortDate(ev.uploadDate)}
+                                </span>
+                              )}
+                              {ev.budget > 0 && (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                                  예산 {ev.budget.toLocaleString()}원
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           {ev.notes && (
                             <p className="text-sm text-muted-foreground mt-2 flex items-start gap-1.5">
